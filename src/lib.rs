@@ -25,6 +25,15 @@ pub struct KeyInfo {
 }
 
 impl KeyInfo {
+    pub fn new(source_type: SourceType, region: String, key: String, secret: String) -> KeyInfo {
+        KeyInfo{
+            source_type,
+            region,
+            key,
+            secret,
+        }
+    }
+
     pub fn build_request_info(&self, method: &str, datetime: DateTime<Utc>, data: &Vec<u8>,
                           path: &String) -> Result<RequestInfo, Error> {
         let parts: Vec<String> = path.splitn(2, '/').map(|p| p.to_string()).collect();
@@ -147,8 +156,8 @@ fn scope_string(shortdate: &String, region: &String, service: &str) -> String {
 }
 
 pub struct RequestInfo {
-    url: String,
-    headers: HeaderMap
+    pub url: String,
+    pub headers: HeaderMap
 }
 
 impl RequestInfo {
@@ -178,12 +187,12 @@ mod tests {
 
     #[test]
     fn test_build_request_info() -> Result<(), Error> {
-        let key_info = KeyInfo{
-            source_type: SourceType::AWS,
-            region: "us-east-1".to_string(),
-            key: "key1234567890".to_string(),
-            secret: "secret1234567890".to_string()
-        };
+        let key_info = KeyInfo::new(
+            SourceType::AWS,
+            "us-east-1".to_string(),
+            "key1234567890".to_string(),
+            "secret1234567890".to_string()
+        );
         let path = "test/".to_string();
         let now = chrono::Utc.with_ymd_and_hms(2023, 11, 5, 20, 14, 0).unwrap();
         let request_info = key_info.build_request_info("GET",
