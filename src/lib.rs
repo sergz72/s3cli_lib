@@ -14,20 +14,24 @@ type HmacSha256 = Hmac<Sha256>;
 
 pub enum SourceType {
     AWS,
-    GCP
+    GCP,
+    Custom
 }
 
 pub struct KeyInfo {
     source_type: SourceType,
+    host: Option<String>,
     region: String,
     key: String,
     secret: String
 }
 
 impl KeyInfo {
-    pub fn new(source_type: SourceType, region: String, key: String, secret: String) -> KeyInfo {
+    pub fn new(source_type: SourceType, host: Option<String>, region: String, key: String,
+               secret: String) -> KeyInfo {
         KeyInfo{
             source_type,
+            host,
             region,
             key,
             secret,
@@ -39,7 +43,14 @@ impl KeyInfo {
         let parts: Vec<String> = path.splitn(2, '/').map(|p| p.to_string()).collect();
         let host = parts[0].clone() + match &self.source_type {
             SourceType::AWS => ".s3.amazonaws.com",
-            SourceType::GCP => ".storage.googleapis.com"
+            SourceType::GCP => ".storage.googleapis.com",
+            SourceType::Custom => {
+                if let Some(host) = &self.host {
+                    host.as_str()
+                } else {
+                    return Err(Error::new(ErrorKind::InvalidInput, "missing host"))
+                }
+            }
         };
         let file_name = if parts.len() == 2 { parts[1].as_str() } else { "" };
         let url_path = "/".to_string() + file_name;
@@ -189,6 +200,7 @@ mod tests {
     fn test_build_request_info() -> Result<(), Error> {
         let key_info = KeyInfo::new(
             SourceType::AWS,
+            None,
             "us-east-1".to_string(),
             "key1234567890".to_string(),
             "secret1234567890".to_string()
