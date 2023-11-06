@@ -190,6 +190,37 @@ impl RequestInfo {
     }
 }
 
+pub fn build_key_info(data: Vec<u8>) -> Result<KeyInfo, Error> {
+    let text = String::from_utf8(data)
+        .map_err(|e|Error::new(ErrorKind::InvalidData, e.to_string()))?;
+    let lines: Vec<String> = text.split('\n')
+        .map(|v|v.to_string().trim().to_string())
+        .collect();
+    if lines.len() < 4 || lines[0].is_empty() || lines[1].is_empty() || lines[2].is_empty() ||
+        lines[3].is_empty() {
+        return Err(Error::new(ErrorKind::InvalidData, "incorrect key file"));
+    }
+    let (source_type, host) = match lines[0].as_str() {
+        "aws" => (SourceType::AWS, None),
+        "gcp" => (SourceType::GCP, None),
+        _ => {
+            let parts: Vec<&str> = lines[0].splitn(2, ' ').collect();
+            if parts.len() == 2 && parts[0] == "custom" {
+                (SourceType::Custom, Some(".".to_string() + parts[1]))
+            } else {
+                return Err(Error::new(ErrorKind::InvalidData, "unknown source type"))
+            }
+        }
+    };
+    Ok(KeyInfo::new(
+        source_type,
+        host,
+        lines[1].clone(),
+        lines[2].clone(),
+        lines[3].clone(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Error;
