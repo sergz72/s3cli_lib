@@ -179,10 +179,15 @@ impl RequestInfo {
         let res = request
             .send()
             .map_err(|e|Error::new(ErrorKind::Other, e.to_string()))?;
-        if res.status_code != 200 {
-            return Err(Error::new(ErrorKind::Other, "wrong status code"));
-        }
+        let status_code = res.status_code;
         let data = res.into_bytes();
+        if status_code != 200 {
+            let body = String::from_utf8(data)
+                .unwrap_or("could not parse body to string".to_string());
+            let error_message =
+                format!("wrong status code {}\n{}", status_code, body);
+            return Err(Error::new(ErrorKind::Other, error_message));
+        }
         Ok(data)
     }
 }
@@ -240,10 +245,10 @@ mod tests {
                                                        &Vec::new(), &path)?;
         assert_eq!(request_info.url, "https://test.s3.amazonaws.com/");
         assert_eq!(request_info.headers.len(), 4);
-        assert_eq!(request_info.headers.get("host").unwrap().to_str().unwrap(), "test.s3.amazonaws.com");
-        assert_eq!(request_info.headers.get("x-amz-date").unwrap().to_str().unwrap(), "20231105T201400Z");
-        assert_eq!(request_info.headers.get("x-amz-content-sha256").unwrap().to_str().unwrap(), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        assert_eq!(request_info.headers.get(reqwest::header::AUTHORIZATION).unwrap().to_str().unwrap(),
+        assert_eq!(request_info.headers.get("host").unwrap().as_str(), "test.s3.amazonaws.com");
+        assert_eq!(request_info.headers.get("X-Amz-Date").unwrap().as_str(), "20231105T201400Z");
+        assert_eq!(request_info.headers.get("x-amz-content-sha256").unwrap().as_str(), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(request_info.headers.get("Authorization").unwrap().as_str(),
                    "AWS4-HMAC-SHA256 Credential=key1234567890/20231105/us-east-1/s3/aws4_request,SignedHeaders=host;x-amz-content-sha256;x-amz-date,Signature=9163c1d7bc7737bc66f38363098b6f67dcbb0fd2500ea52607b21e0c62c75dd7");
         Ok(())
     }
