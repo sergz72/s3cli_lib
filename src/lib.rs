@@ -1,10 +1,9 @@
+use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use chrono::{DateTime, Utc};
 use hex_encode_rust::hex_encode;
 use hmac::digest::KeyInit;
 use hmac::{Hmac, Mac};
-use reqwest::header::HeaderMap;
-use reqwest::StatusCode;
 use sha2::{Sha256, Digest};
 
 const SIGNED_HEADER_STRING: &str = "host;x-amz-content-sha256;x-amz-date";
@@ -57,21 +56,19 @@ impl KeyInfo {
         let url = "https://".to_string() + host.as_str() + url_path.as_str();
         let longdatetime = datetime.format("%Y%m%dT%H%M%SZ").to_string();
         let shortdate = datetime.format("%Y%m%d").to_string();
-        let mut headers = HeaderMap::new();
+        let mut headers = HashMap::new();
         headers.insert(
-            "X-Amz-Date",
-            longdatetime
-                .parse()
-                .unwrap(),
+            "X-Amz-Date".to_string(),
+            longdatetime.clone()
         );
-        headers.insert("host", host.parse().unwrap());
+        headers.insert("host".to_string(), host.clone());
         let mut hasher = Sha256::new();
         hasher.update(data);
         let hash = hex_encode(hasher.finalize().as_slice());
-        headers.insert("x-amz-content-sha256", hash.parse().unwrap());
+        headers.insert("x-amz-content-sha256".to_string(), hash.clone());
         let signature = self.build_signature(method, url_path, longdatetime,
                                              shortdate, host, hash)?;
-        headers.insert(reqwest::header::AUTHORIZATION, signature.parse().unwrap());
+        headers.insert("Authorization".to_string(), signature);
         Ok(RequestInfo{ url, headers })
     }
 
@@ -168,24 +165,24 @@ fn scope_string(shortdate: &String, region: &String, service: &str) -> String {
 
 pub struct RequestInfo {
     pub url: String,
-    pub headers: HeaderMap
+    pub headers: HashMap<String, String>
 }
 
 impl RequestInfo {
     pub fn make_request(&self, data: Option<Vec<u8>>) -> Result<Vec<u8>, Error> {
-        let client = reqwest::blocking::Client::new();
-        let builder = if data.is_some() {
-            client.put(&self.url).body(data.unwrap())
-        } else {client.get(&self.url)};
-        let res = builder
-            .headers(self.headers.to_owned())
+        let mut request = if data.is_some() {
+            minreq::put(&self.url).with_body(data.unwrap())
+        } else {minreq::get(&self.url)};
+        for (k, v) in &self.headers {
+            request = request.with_header(k, v);
+        }
+        let res = request
             .send()
             .map_err(|e|Error::new(ErrorKind::Other, e.to_string()))?;
-        if res.status() != StatusCode::OK {
+        if res.status_code != 200 {
             return Err(Error::new(ErrorKind::Other, "wrong status code"));
         }
-        let data = res.bytes()
-            .map_err(|e|Error::new(ErrorKind::Other, e.to_string()))?.into();
+        let data = res.into_bytes();
         Ok(data)
     }
 }
