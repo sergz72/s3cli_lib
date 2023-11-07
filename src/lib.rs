@@ -61,7 +61,7 @@ impl KeyInfo {
             "X-Amz-Date".to_string(),
             longdatetime.clone()
         );
-        headers.insert("host".to_string(), host.clone());
+        //headers.insert("host".to_string(), host.clone());
         let mut hasher = Sha256::new();
         hasher.update(data);
         let hash = hex_encode(hasher.finalize().as_slice());
@@ -244,8 +244,8 @@ mod tests {
                                                        now.clone(),
                                                        &Vec::new(), &path)?;
         assert_eq!(request_info.url, "https://test.s3.amazonaws.com/");
-        assert_eq!(request_info.headers.len(), 4);
-        assert_eq!(request_info.headers.get("host").unwrap().as_str(), "test.s3.amazonaws.com");
+        assert_eq!(request_info.headers.len(), 3);
+        //assert_eq!(request_info.headers.get("host").unwrap().as_str(), "test.s3.amazonaws.com");
         assert_eq!(request_info.headers.get("X-Amz-Date").unwrap().as_str(), "20231105T201400Z");
         assert_eq!(request_info.headers.get("x-amz-content-sha256").unwrap().as_str(), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
         assert_eq!(request_info.headers.get("Authorization").unwrap().as_str(),
