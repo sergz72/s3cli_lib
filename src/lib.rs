@@ -190,7 +190,7 @@ impl RequestInfo {
             .map_err(|e|Error::new(ErrorKind::Other, e.to_string()))?;
         let status_code = res.status_code;
         let data = res.into_bytes();
-        if status_code != 200 {
+        if status_code != 200 && status_code != 201 {
             let body = String::from_utf8(data)
                 .unwrap_or("could not parse body to string".to_string());
             let error_message =

@@ -14,24 +14,43 @@ pub struct AzureKeyInfo {
 }
 
 impl KeyInfo for AzureKeyInfo {
-    fn build_request_info(&self, method: &str, datetime: DateTime<Utc>, _data: &Vec<u8>,
+    fn build_request_info(&self, method: &str, datetime: DateTime<Utc>, data: &Vec<u8>,
                           path: &String) -> Result<RequestInfo, Error> {
         let parts: Vec<String> = path.splitn(2, '/').map(|p| p.to_string()).collect();
         if parts.len() == 0 {
             return Err(Error::new(ErrorKind::InvalidInput, "empty path"));
         }
-        let container = parts[0].clone();
-        //let file_name = parts[1].clone();
         let longdatetime = datetime.format("%a, %d %h %Y %H:%M:%S %Z").to_string()
             .replace("UTC", "GMT");
         let mut headers = HashMap::new();
         headers.insert("x-ms-date".to_string(), longdatetime.clone());
         headers.insert("x-ms-version".to_string(), VERSION.to_string());
+        let md5_hash = if method == "PUT" {
+            let hash = base64_encode_bytes(&md5::compute(data).0);
+            headers.insert("x-ms-blob-type".to_string(), "BlockBlob".to_string());
+            headers.insert("x-ms-access-tier".to_string(), "Hot".to_string());
+            headers.insert("Content-MD5".to_string(), hash.clone());
+            hash
+        } else { String::new() };
+        let (canonicalized_headers, canonicalized_resource, content_length) =
+            if method == "GET" {
+                let query_info = if parts.len() == 1 {
+                    "\ncomp:list\nrestype:container"
+                } else { "" };
+                let (h, v) = self.build_headers_resource_get(longdatetime, path, query_info);
+                (h, v, "".to_string())
+        } else {
+            let (h, v) = self.build_headers_resource_put(longdatetime, path);
+            (h, v, data.len().to_string())
+        };
         let bearer = format!("SharedKey {}:{}", self.account,
-                             self.build_signature(method, longdatetime, container)?);
+                             self.build_signature(method, canonicalized_headers,
+                                                  canonicalized_resource, content_length, md5_hash)?);
         headers.insert("Authorization".to_string(), bearer);
-        let url = format!("https://{}.blob.core.windows.net/{}?restype=container&comp=list",
-                          self.account, path);
+        let mut url = format!("https://{}.blob.core.windows.net/{}", self.account, path);
+        if method == "GET" && parts.len() == 1 {
+            url += "?restype=container&comp=list";
+        }
         Ok(RequestInfo{ url, headers })
     }
 }
@@ -45,12 +64,26 @@ impl AzureKeyInfo {
         Ok(AzureKeyInfo{ account, key })
     }
 
-    fn build_signature(&self, method: &str, date: String, container: String) -> Result<String, Error> {
+    fn build_headers_resource_put(&self, date: String, path: &String) -> (String, String) {
+        let canonicalized_headers =
+            format!("x-ms-access-tier:Hot\nx-ms-blob-type:BlockBlob\nx-ms-date:{}\nx-ms-version:{}",
+                    date, VERSION);
+        let canonicalized_resource=format!("/{}/{}", self.account, path);
+        (canonicalized_headers, canonicalized_resource)
+    }
+
+    fn build_headers_resource_get(&self, date: String, path: &String, query_info: &str) -> (String, String) {
         let canonicalized_headers = format!("x-ms-date:{}\nx-ms-version:{}", date, VERSION);
-        let canonicalized_resource=format!("/{}/{}\ncomp:list\nrestype:container",
-                                           self.account, container);
-        let string_to_sign = format!("{}\n\n\n\n\n\n\n\n\n\n\n\n{}\n{}",
-                                     method, canonicalized_headers, canonicalized_resource);
+        let canonicalized_resource=format!("/{}/{}{}", self.account, path, query_info);
+        (canonicalized_headers, canonicalized_resource)
+    }
+
+    fn build_signature(&self, method: &str, canonicalized_headers: String,
+                       canonicalized_resource: String, content_length: String,
+                       md5_hash: String) -> Result<String, Error> {
+        let string_to_sign = format!("{}\n\n\n{}\n{}\n\n\n\n\n\n\n\n{}\n{}",
+                                     method, content_length, md5_hash, canonicalized_headers,
+                                     canonicalized_resource);
         let mut mac: HmacSha256 = KeyInit::new_from_slice(&self.key)
             .map_err(|e|Error::new(ErrorKind::InvalidData, e.to_string()))?;
         mac.update(string_to_sign.as_bytes());
