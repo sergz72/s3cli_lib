@@ -11,3 +11,4 @@ hmac = "0.12.1"
 sha2 = "0.10.8"
 minreq = { version = "2.11.0", features = ["https"] }
 hex_encode_rust = { git = "https://github.com/sergz72/hex_encode_rust.git"}
+base64_light = "0.1.5"

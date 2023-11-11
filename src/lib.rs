@@ -1,3 +1,5 @@
+pub mod azure;
+
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind};
 use chrono::{DateTime, Utc};
@@ -17,7 +19,12 @@ pub enum SourceType {
     Custom
 }
 
-pub struct KeyInfo {
+pub trait KeyInfo {
+    fn build_request_info(&self, method: &str, datetime: DateTime<Utc>, data: &Vec<u8>,
+                          path: &String) -> Result<RequestInfo, Error>;
+}
+
+pub struct S3KeyInfo {
     source_type: SourceType,
     host: Option<String>,
     region: String,
@@ -25,19 +32,8 @@ pub struct KeyInfo {
     secret: String
 }
 
-impl KeyInfo {
-    pub fn new(source_type: SourceType, host: Option<String>, region: String, key: String,
-               secret: String) -> KeyInfo {
-        KeyInfo{
-            source_type,
-            host,
-            region,
-            key,
-            secret,
-        }
-    }
-
-    pub fn build_request_info(&self, method: &str, datetime: DateTime<Utc>, data: &Vec<u8>,
+impl KeyInfo for S3KeyInfo {
+    fn build_request_info(&self, method: &str, datetime: DateTime<Utc>, data: &Vec<u8>,
                           path: &String) -> Result<RequestInfo, Error> {
         let parts: Vec<String> = path.splitn(2, '/').map(|p| p.to_string()).collect();
         let host = parts[0].clone() + match &self.source_type {
@@ -70,6 +66,19 @@ impl KeyInfo {
                                              shortdate, host, hash)?;
         headers.insert("Authorization".to_string(), signature);
         Ok(RequestInfo{ url, headers })
+    }
+}
+
+impl S3KeyInfo {
+    pub fn new(source_type: SourceType, host: Option<String>, region: String, key: String,
+               secret: String) -> S3KeyInfo {
+        S3KeyInfo{
+            source_type,
+            host,
+            region,
+            key,
+            secret,
+        }
     }
 
     fn build_signature(&self, method: &str, url_path: String, longdatetime: String,
@@ -192,7 +201,7 @@ impl RequestInfo {
     }
 }
 
-pub fn build_key_info(data: Vec<u8>) -> Result<KeyInfo, Error> {
+pub fn build_key_info(data: Vec<u8>) -> Result<S3KeyInfo, Error> {
     let text = String::from_utf8(data)
         .map_err(|e|Error::new(ErrorKind::InvalidData, e.to_string()))?;
     let lines: Vec<String> = text.split('\n')
@@ -214,7 +223,7 @@ pub fn build_key_info(data: Vec<u8>) -> Result<KeyInfo, Error> {
             }
         }
     };
-    Ok(KeyInfo::new(
+    Ok(S3KeyInfo::new(
         source_type,
         host,
         lines[1].clone(),
