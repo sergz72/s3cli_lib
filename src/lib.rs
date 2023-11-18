@@ -13,10 +13,12 @@ const S3_SERVICE: &str = "s3";
 
 type HmacSha256 = Hmac<Sha256>;
 
+#[derive(PartialEq)]
 pub enum SourceType {
     AWS,
     GCP,
-    Custom
+    Custom,
+    CustomNoPrefix
 }
 
 pub trait KeyInfo {
@@ -36,19 +38,29 @@ impl KeyInfo for S3KeyInfo {
     fn build_request_info(&self, method: &str, datetime: DateTime<Utc>, data: &Vec<u8>,
                           path: &String) -> Result<RequestInfo, Error> {
         let parts: Vec<String> = path.splitn(2, '/').map(|p| p.to_string()).collect();
-        let host = parts[0].clone() + match &self.source_type {
-            SourceType::AWS => ".s3.amazonaws.com",
-            SourceType::GCP => ".storage.googleapis.com",
+        let host = match &self.source_type {
+            SourceType::AWS => parts[0].clone() + ".s3.amazonaws.com",
+            SourceType::GCP => parts[0].clone() + ".storage.googleapis.com",
             SourceType::Custom => {
                 if let Some(host) = &self.host {
-                    host.as_str()
+                    parts[0].clone() + host.as_str()
+                } else {
+                    return Err(Error::new(ErrorKind::InvalidInput, "missing host"))
+                }
+            },
+            SourceType::CustomNoPrefix => {
+                if let Some(host) = &self.host {
+                    host.clone()
                 } else {
                     return Err(Error::new(ErrorKind::InvalidInput, "missing host"))
                 }
             }
         };
-        let file_name = if parts.len() == 2 { parts[1].as_str() } else { "" };
-        let url_path = "/".to_string() + file_name;
+        let url_path = "/".to_string() + if self.source_type == SourceType::CustomNoPrefix {
+            path.as_str()
+        } else {
+            if parts.len() == 2 { parts[1].as_str() } else { "" }
+        };
         let url = "https://".to_string() + host.as_str() + url_path.as_str();
         let longdatetime = datetime.format("%Y%m%dT%H%M%SZ").to_string();
         let shortdate = datetime.format("%Y%m%d").to_string();
@@ -215,9 +227,15 @@ pub fn build_key_info(data: Vec<u8>) -> Result<S3KeyInfo, Error> {
         "aws" => (SourceType::AWS, None),
         "gcp" => (SourceType::GCP, None),
         _ => {
-            let parts: Vec<&str> = lines[0].splitn(2, ' ').collect();
-            if parts.len() == 2 && parts[0] == "custom" {
-                (SourceType::Custom, Some(".".to_string() + parts[1]))
+            let parts: Vec<&str> = lines[0].splitn(3, ' ').collect();
+            if parts[0] == "custom" {
+                if parts.len() == 2 {
+                    (SourceType::Custom, Some(".".to_string() + parts[1]))
+                } else if parts[1] == "noprefix" {
+                    (SourceType::CustomNoPrefix, Some(parts[2].to_string()))
+                } else {
+                    return Err(Error::new(ErrorKind::InvalidData, "unknown source type modifier"))
+                }
             } else {
                 return Err(Error::new(ErrorKind::InvalidData, "unknown source type"))
             }
@@ -236,11 +254,11 @@ pub fn build_key_info(data: Vec<u8>) -> Result<S3KeyInfo, Error> {
 mod tests {
     use std::io::Error;
     use chrono::TimeZone;
-    use crate::{KeyInfo, SourceType};
+    use crate::{KeyInfo, S3KeyInfo, SourceType};
 
     #[test]
     fn test_build_request_info() -> Result<(), Error> {
-        let key_info = KeyInfo::new(
+        let key_info = S3KeyInfo::new(
             SourceType::AWS,
             None,
             "us-east-1".to_string(),
