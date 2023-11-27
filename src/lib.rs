@@ -47,6 +47,88 @@ pub struct S3KeyInfo {
     secret: String,
 }
 
+struct S3SignatureBuilder {
+    host: String,
+    url_path: String,
+    url: String,
+    longdatetime: String,
+    shortdate: String,
+}
+
+impl S3SignatureBuilder {
+    fn new(key_info: &S3KeyInfo, path: &String, datetime: DateTime<Utc>) -> Result<S3SignatureBuilder, Error> {
+        let parts: Vec<String> = path.splitn(2, '/').map(|p| p.to_string()).collect();
+        let host = match &key_info.source_type {
+            SourceType::AWS => parts[0].clone() + ".s3." + key_info.region.as_str() + ".amazonaws.com",
+            SourceType::GCP => parts[0].clone() + ".storage.googleapis.com",
+            SourceType::Custom => {
+                if let Some(host) = &key_info.host {
+                    parts[0].clone() + host.as_str()
+                } else {
+                    return Err(Error::new(ErrorKind::InvalidInput, "missing host"));
+                }
+            }
+            SourceType::CustomNoPrefix => {
+                if let Some(host) = &key_info.host {
+                    host.clone()
+                } else {
+                    return Err(Error::new(ErrorKind::InvalidInput, "missing host"));
+                }
+            }
+        };
+        let url_path = "/".to_string()
+            + if key_info.source_type == SourceType::CustomNoPrefix {
+            path.as_str()
+        } else {
+            if parts.len() == 2 {
+                parts[1].as_str()
+            } else {
+                ""
+            }
+        };
+        let url = "https://".to_string() + host.as_str() + url_path.as_str();
+        let longdatetime = datetime.format("%Y%m%dT%H%M%SZ").to_string();
+        let shortdate = datetime.format("%Y%m%d").to_string();
+
+        Ok(S3SignatureBuilder{
+            host,
+            url_path,
+            url,
+            longdatetime,
+            shortdate,
+        })
+    }
+
+    fn build_signature(
+        &self,
+        method: &str,
+        key_info: &S3KeyInfo,
+        hash: String,
+        query_parameters: &String,
+        only_use_host: bool,
+    ) -> Result<String, Error> {
+        let canonical = canonical_request(method, &self.url_path, query_parameters, &self.host, hash, &self.longdatetime, only_use_host);
+        let scope = scope_string(&self.shortdate, &key_info.region, S3_SERVICE);
+        let string_to_sign = string_to_sign(&self.longdatetime, scope.clone(), &canonical);
+        let signing_key = signing_key(&self.shortdate, &key_info.secret, &key_info.region, S3_SERVICE)?;
+
+        let mut mac: HmacSha256 = KeyInit::new_from_slice(&signing_key)
+            .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
+        mac.update(string_to_sign.as_bytes());
+        let hash1 = mac.finalize();
+        let bytes1 = hash1.into_bytes();
+        let signature = hex_encode(&bytes1.as_slice());
+
+        if only_use_host {
+            return Ok(signature);
+        }
+        Ok(format!(
+            "AWS4-HMAC-SHA256 Credential={}/{},SignedHeaders={},Signature={}",
+            key_info.key, scope, SIGNED_HEADER_STRING, signature
+        ))
+    }
+}
+
 impl KeyInfo for S3KeyInfo {
     fn build_request_info(
         &self,
@@ -55,49 +137,16 @@ impl KeyInfo for S3KeyInfo {
         data: &Vec<u8>,
         path: &String,
     ) -> Result<RequestInfo, Error> {
-        let parts: Vec<String> = path.splitn(2, '/').map(|p| p.to_string()).collect();
-        let host = match &self.source_type {
-            SourceType::AWS => parts[0].clone() + ".s3.amazonaws.com",
-            SourceType::GCP => parts[0].clone() + ".storage.googleapis.com",
-            SourceType::Custom => {
-                if let Some(host) = &self.host {
-                    parts[0].clone() + host.as_str()
-                } else {
-                    return Err(Error::new(ErrorKind::InvalidInput, "missing host"));
-                }
-            }
-            SourceType::CustomNoPrefix => {
-                if let Some(host) = &self.host {
-                    host.clone()
-                } else {
-                    return Err(Error::new(ErrorKind::InvalidInput, "missing host"));
-                }
-            }
-        };
-        let url_path = "/".to_string()
-            + if self.source_type == SourceType::CustomNoPrefix {
-                path.as_str()
-            } else {
-                if parts.len() == 2 {
-                    parts[1].as_str()
-                } else {
-                    ""
-                }
-            };
-        let url = "https://".to_string() + host.as_str() + url_path.as_str();
-        let longdatetime = datetime.format("%Y%m%dT%H%M%SZ").to_string();
-        let shortdate = datetime.format("%Y%m%d").to_string();
+        let builder = S3SignatureBuilder::new(&self, path, datetime)?;
         let mut headers = HashMap::new();
-        headers.insert("X-Amz-Date".to_string(), longdatetime.clone());
-        //headers.insert("host".to_string(), host.clone());
+        headers.insert("X-Amz-Date".to_string(), builder.longdatetime.clone());
         let mut hasher = Sha256::new();
         hasher.update(data);
         let hash = hex_encode(hasher.finalize().as_slice());
         headers.insert("x-amz-content-sha256".to_string(), hash.clone());
-        let signature =
-            self.build_signature(method, url_path, longdatetime, shortdate, host, hash)?;
+        let signature = builder.build_signature(method, &self, hash, &"".to_string(), false)?;
         headers.insert("Authorization".to_string(), signature);
-        Ok(RequestInfo { url, headers })
+        Ok(RequestInfo { url: builder.url.clone(), headers })
     }
 
     fn build_presigned_url(
@@ -107,7 +156,13 @@ impl KeyInfo for S3KeyInfo {
         path: &String,
         expiration: usize,
     ) -> Result<String, Error> {
-        todo!()
+        let builder = S3SignatureBuilder::new(&self, path, datetime)?;
+        let query_parameters = format!(
+            "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={}%2F{}%2F{}%2Fs3%2Faws4_request&X-Amz-Date={}&X-Amz-Expires={}&X-Amz-SignedHeaders=host",
+            self.key, builder.shortdate, self.region, builder.longdatetime, expiration);
+        let signature =
+            builder.build_signature(method, &self, "UNSIGNED-PAYLOAD".to_string(), &query_parameters, true)?;
+        Ok(format!("{}?{}&X-Amz-Signature={}", builder.url, query_parameters, signature))
     }
 }
 
@@ -127,37 +182,10 @@ impl S3KeyInfo {
             secret,
         }
     }
-
-    fn build_signature(
-        &self,
-        method: &str,
-        url_path: String,
-        longdatetime: String,
-        shortdate: String,
-        host: String,
-        hash: String,
-    ) -> Result<String, Error> {
-        let canonical = canonical_request(method, url_path, host, hash, &longdatetime);
-        let scope = scope_string(&shortdate, &self.region, S3_SERVICE);
-        let string_to_sign = string_to_sign(longdatetime, scope.clone(), &canonical);
-        let signing_key = signing_key(shortdate, &self.secret, &self.region, S3_SERVICE)?;
-
-        let mut mac: HmacSha256 = KeyInit::new_from_slice(&signing_key)
-            .map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
-        mac.update(string_to_sign.as_bytes());
-        let hash1 = mac.finalize();
-        let bytes1 = hash1.into_bytes();
-        let signature = hex_encode(&bytes1.as_slice());
-
-        Ok(format!(
-            "AWS4-HMAC-SHA256 Credential={}/{},SignedHeaders={},Signature={}",
-            self.key, scope, SIGNED_HEADER_STRING, signature
-        ))
-    }
 }
 
 fn signing_key(
-    shortdate: String,
+    shortdate: &String,
     secret_key: &String,
     region: &String,
     service: &str,
@@ -189,29 +217,36 @@ fn signing_key(
 
 fn canonical_request(
     method: &str,
-    url_path: String,
-    host: String,
+    url_path: &String,
+    query_parameters: &String,
+    host: &String,
     hash: String,
     longdatetime: &String,
+    only_use_host: bool
 ) -> String {
     format!(
-        "{}\n{}\n\n{}\n\n{}\n{}",
+        "{}\n{}\n{}\n{}\n\n{}\n{}",
         method,
         url_path,
-        canonical_header_string(host, hash.clone(), longdatetime),
-        SIGNED_HEADER_STRING,
+        query_parameters,
+        canonical_header_string(host, hash.clone(), longdatetime, only_use_host),
+        if only_use_host {"host"} else {SIGNED_HEADER_STRING},
         hash
     )
 }
 
-fn canonical_header_string(host: String, hash: String, longdatetime: &String) -> String {
+fn canonical_header_string(host: &String, hash: String, longdatetime: &String, only_use_host: bool)
+    -> String {
+    if only_use_host {
+        return format!("host:{}", host);
+    }
     format!(
         "host:{}\nx-amz-content-sha256:{}\nx-amz-date:{}",
         host, hash, longdatetime
     )
 }
 
-fn string_to_sign(longdatetime: String, scope: String, canonical_req: &String) -> String {
+fn string_to_sign(longdatetime: &String, scope: String, canonical_req: &String) -> String {
     let mut hasher = Sha256::new();
     hasher.update(canonical_req.as_bytes());
     let hash = hasher.finalize();
@@ -304,7 +339,8 @@ pub fn build_key_info(data: Vec<u8>) -> Result<S3KeyInfo, Error> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{KeyInfo, S3KeyInfo, SourceType};
+    use std::fs;
+    use crate::{build_key_info, KeyInfo, S3KeyInfo, SourceType};
     use chrono::TimeZone;
     use std::io::Error;
 
@@ -322,7 +358,7 @@ mod tests {
             .with_ymd_and_hms(2023, 11, 5, 20, 14, 0)
             .unwrap();
         let request_info = key_info.build_request_info("GET", now.clone(), &Vec::new(), &path)?;
-        assert_eq!(request_info.url, "https://test.s3.amazonaws.com/");
+        assert_eq!(request_info.url, "https://test.s3.us-east-1.amazonaws.com/");
         assert_eq!(request_info.headers.len(), 3);
         //assert_eq!(request_info.headers.get("host").unwrap().as_str(), "test.s3.amazonaws.com");
         assert_eq!(
@@ -338,7 +374,7 @@ mod tests {
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
         assert_eq!(request_info.headers.get("Authorization").unwrap().as_str(),
-                   "AWS4-HMAC-SHA256 Credential=key1234567890/20231105/us-east-1/s3/aws4_request,SignedHeaders=host;x-amz-content-sha256;x-amz-date,Signature=9163c1d7bc7737bc66f38363098b6f67dcbb0fd2500ea52607b21e0c62c75dd7");
+                   "AWS4-HMAC-SHA256 Credential=key1234567890/20231105/us-east-1/s3/aws4_request,SignedHeaders=host;x-amz-content-sha256;x-amz-date,Signature=563f38c986978b549b37e6625ab0cd1896b4cbb9500c41b4f07abc6f4499e599");
         Ok(())
     }
 
@@ -351,12 +387,12 @@ mod tests {
             "key1234567890".to_string(),
             "secret1234567890".to_string(),
         );
-        let path = "test/file.txt".to_string();
+        let path = "pdbf/file.txt".to_string();
         let now = chrono::Utc
-            .with_ymd_and_hms(2023, 11, 5, 20, 14, 0)
+            .with_ymd_and_hms(2023, 11, 27, 18, 13, 18)
             .unwrap();
         let url = key_info.build_presigned_url("GET", now.clone(), &path, 60)?;
-        assert_eq!(url, "skfgrhregher");
+        assert_eq!(url, "https://pdbf.s3.us-east-1.amazonaws.com/file.txt?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=key1234567890%2F20231127%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20231127T181318Z&X-Amz-Expires=60&X-Amz-SignedHeaders=host&X-Amz-Signature=a19704408c6cc588423f5932a809185fbaf35ceb66e552244b9cf86fd40ff5d5");
         Ok(())
     }
 }
