@@ -13,3 +13,4 @@ minreq = { version = "2.11.0", features = ["https"] }
 hex_encode_rust = { git = "https://github.com/sergz72/hex_encode_rust.git"}
 base64_light = "0.1.5"
 md5 = "0.7.0"
+qs3_lib = { git = "https://github.com/sergz72/qs3_lib.git" }

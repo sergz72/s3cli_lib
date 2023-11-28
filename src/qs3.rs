@@ -1,43 +1,51 @@
-use std::io::Error;
+use std::collections::HashMap;
+use std::io::{Error, ErrorKind};
 use chrono::{DateTime, Utc};
+use qs3_lib::client::ServerConfig;
 use crate::{KeyInfo, RequestInfo};
 
 pub struct QKeyInfo {
-    host_name: String,
-    port: u16,
-    rsa_public_key: String,
-    s3_password: String
+    server_config: ServerConfig,
+    rsa_key: String,
+    read_timeout: u64,
+    retries: usize
 }
 
 impl KeyInfo for QKeyInfo {
     fn build_request_info(
         &self,
         method: &str,
-        datetime: DateTime<Utc>,
-        data: &Vec<u8>,
+        _datetime: DateTime<Utc>,
+        _data: &Vec<u8>,
         path: &String,
     ) -> Result<RequestInfo, Error> {
-        todo!()
+        let method = match method {
+            "GET" => 0u8,
+            "PUT" => 1u8,
+            _ => return Err(Error::new(ErrorKind::InvalidInput, "invalid method"))
+        };
+        let response = self.server_config.qsend(self.rsa_key.as_str(), method, path,
+                                                self.read_timeout, self.retries)?;
+        let url = String::from_utf8(response)
+            .map_err(|_e|Error::new(ErrorKind::InvalidData, "incorrect response from server"))?;
+        Ok(RequestInfo{ url, headers: HashMap::new() })
     }
 
     fn build_presigned_url(
         &self,
-        method: &str,
-        datetime: DateTime<Utc>,
-        path: &String,
-        expiration: usize,
+        _method: &str,
+        _datetime: DateTime<Utc>,
+        _path: &String,
+        _expiration: usize,
     ) -> Result<String, Error> {
         todo!()
     }
 }
 
 impl QKeyInfo {
-    pub fn new(data: Vec<u8>) -> Result<QKeyInfo, Error> {
-        Ok(QKeyInfo{
-            host_name: "".to_string(),
-            port: 0,
-            rsa_public_key: "".to_string(),
-            s3_password: "".to_string(),
-        })
+    pub fn new(data: Vec<u8>, rsa_key: String, read_timeout: u64, retries: usize)
+        -> Result<QKeyInfo, Error> {
+        let server_config = ServerConfig::new(data)?;
+        Ok(QKeyInfo{ server_config, rsa_key, read_timeout, retries })
     }
 }

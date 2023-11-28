@@ -74,10 +74,10 @@ impl KeyInfo for AzureKeyInfo {
 
     fn build_presigned_url(
         &self,
-        method: &str,
-        datetime: DateTime<Utc>,
-        path: &String,
-        expiration: usize,
+        _method: &str,
+        _datetime: DateTime<Utc>,
+        _path: &String,
+        _expiration: usize,
     ) -> Result<String, Error> {
         todo!()
     }

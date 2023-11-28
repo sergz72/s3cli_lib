@@ -1,5 +1,5 @@
 pub mod azure;
-mod qs3;
+pub mod qs3;
 
 use chrono::{DateTime, Utc};
 use hex_encode_rust::{hex_decode, hex_encode};
@@ -360,8 +360,7 @@ pub fn build_key_info(data: Vec<u8>) -> Result<S3KeyInfo, Error> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use crate::{build_key_info, KeyInfo, S3KeyInfo, SourceType};
+    use crate::{KeyInfo, S3KeyInfo, SourceType};
     use chrono::TimeZone;
     use std::io::Error;
 
