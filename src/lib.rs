@@ -2,7 +2,7 @@ pub mod azure;
 mod qs3;
 
 use chrono::{DateTime, Utc};
-use hex_encode_rust::hex_encode;
+use hex_encode_rust::{hex_decode, hex_encode};
 use hmac::digest::KeyInit;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
@@ -14,7 +14,7 @@ const S3_SERVICE: &str = "s3";
 
 type HmacSha256 = Hmac<Sha256>;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 pub enum SourceType {
     AWS,
     GCP,
@@ -181,6 +181,27 @@ impl S3KeyInfo {
             key,
             secret,
         }
+    }
+
+    pub fn new_from_key_info(key_info: &S3KeyInfo, secret: String) -> Result<S3KeyInfo, Error> {
+        let hash = hex_decode(&key_info.secret)?;
+        if hash.len() != 32 {
+            return Err(Error::new(ErrorKind::InvalidData, "wrong hash size"));
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(secret.as_bytes());
+        if hash != hasher.finalize().to_vec() {
+            return Err(Error::new(ErrorKind::InvalidData, "s3 secret hash does not match"));
+        }
+
+        Ok(S3KeyInfo{
+            source_type: key_info.source_type.clone(),
+            host: key_info.host.clone(),
+            region: key_info.region.clone(),
+            key: key_info.key.clone(),
+            secret
+        })
     }
 }
 
