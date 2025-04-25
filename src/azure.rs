@@ -4,15 +4,13 @@ use chrono::{DateTime, Utc};
 use hmac::digest::KeyInit;
 use hmac::Mac;
 use std::collections::HashMap;
-use std::fs;
 use std::io::{Error, ErrorKind};
 
 const VERSION: &str = "2023-11-03";
 
 pub struct AzureKeyInfo {
     account: String,
-    key: Vec<u8>,
-    encryption_key: Option<Vec<u8>>
+    key: Vec<u8>
 }
 
 impl KeyInfo for AzureKeyInfo {
@@ -83,19 +81,15 @@ impl KeyInfo for AzureKeyInfo {
     ) -> Result<String, Error> {
         todo!()
     }
-
-    fn get_encryption_key(&self) -> Option<Vec<u8>> {
-        self.encryption_key.clone()
-    }
 }
 
 impl AzureKeyInfo {
-    pub fn new(account: String, key_string: String, encryption_key: Option<Vec<u8>>) -> Result<AzureKeyInfo, Error> {
+    pub fn new(account: String, key_string: String) -> Result<AzureKeyInfo, Error> {
         let key = base64_decode(key_string.as_str());
         if key.len() != 64 {
             return Err(Error::new(ErrorKind::InvalidInput, "incorrect azure key"));
         }
-        Ok(AzureKeyInfo { account, key, encryption_key })
+        Ok(AzureKeyInfo { account, key })
     }
 
     fn build_headers_resource_put(&self, date: String, path: &String) -> (String, String) {
@@ -139,16 +133,8 @@ impl AzureKeyInfo {
     }
 }
 
-pub fn build_azure_key_info(data: Vec<u8>) -> Result<AzureKeyInfo, Error> {
-    let text =
-        String::from_utf8(data).map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
-    let lines: Vec<String> = text
-        .split('\n')
-        .map(|v| v.to_string().trim().to_string())
-        .collect();
-    if lines.len() < 2 || lines[0].is_empty() || lines[1].is_empty() {
-        return Err(Error::new(ErrorKind::InvalidData, "incorrect key file"));
-    }
-    AzureKeyInfo::new(lines[0].clone(), lines[1].clone(),
-                      if lines.len() > 2 && !lines[2].is_empty() {Some(fs::read(&lines[2])?)} else {None})
+pub fn build_azure_key_info(parameters: &HashMap<String, String>) -> Result<AzureKeyInfo, Error> {
+    let account = parameters.get("account").ok_or(Error::new(ErrorKind::InvalidData, "missing account"))?;
+    let key = parameters.get("access_key").ok_or(Error::new(ErrorKind::InvalidData, "missing access_key"))?;
+    AzureKeyInfo::new(account.clone(), key.clone())
 }

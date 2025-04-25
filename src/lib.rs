@@ -7,7 +7,6 @@ use hmac::digest::KeyInit;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs;
 use std::io::{Error, ErrorKind};
 
 const SIGNED_HEADER_STRING: &str = "host;x-amz-content-sha256;x-amz-date";
@@ -38,8 +37,6 @@ pub trait KeyInfo {
         path: &String,
         expiration: usize,
     ) -> Result<String, Error>;
-
-    fn get_encryption_key(&self) -> Option<Vec<u8>>;
 }
 
 pub struct S3KeyInfo {
@@ -47,8 +44,7 @@ pub struct S3KeyInfo {
     host: Option<String>,
     region: String,
     key: String,
-    secret: String,
-    encryption_key: Option<Vec<u8>>
+    secret: String
 }
 
 struct S3SignatureBuilder {
@@ -168,10 +164,6 @@ impl KeyInfo for S3KeyInfo {
             builder.build_signature(method, &self, "UNSIGNED-PAYLOAD".to_string(), &query_parameters, true)?;
         Ok(format!("{}?{}&X-Amz-Signature={}", builder.url, query_parameters, signature))
     }
-
-    fn get_encryption_key(&self) -> Option<Vec<u8>> {
-        self.encryption_key.clone()
-    }
 }
 
 impl S3KeyInfo {
@@ -180,20 +172,18 @@ impl S3KeyInfo {
         host: Option<String>,
         region: String,
         key: String,
-        secret: String,
-        encryption_key: Option<Vec<u8>>,
+        secret: String
     ) -> S3KeyInfo {
         S3KeyInfo {
             source_type,
             host,
             region,
             key,
-            secret,
-            encryption_key
+            secret
         }
     }
 
-    pub fn new_from_key_info(key_info: &S3KeyInfo, secret: String, encryption_key: Option<Vec<u8>>)
+    pub fn new_from_key_info(key_info: &S3KeyInfo, secret: String)
         -> Result<S3KeyInfo, Error> {
         let hash = hex_decode(&key_info.secret)?;
         if hash.len() != 32 {
@@ -211,8 +201,7 @@ impl S3KeyInfo {
             host: key_info.host.clone(),
             region: key_info.region.clone(),
             key: key_info.key.clone(),
-            secret,
-            encryption_key
+            secret
         })
     }
 }
@@ -325,50 +314,43 @@ impl RequestInfo {
     }
 }
 
-pub fn build_key_info(data: Vec<u8>) -> Result<S3KeyInfo, Error> {
-    let text =
-        String::from_utf8(data).map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
-    let lines: Vec<String> = text
-        .split('\n')
-        .map(|v| v.to_string().trim().to_string())
-        .collect();
-    if lines.len() < 4
-        || lines[0].is_empty()
-        || lines[1].is_empty()
-        || lines[2].is_empty()
-        || lines[3].is_empty()
-    {
-        return Err(Error::new(ErrorKind::InvalidData, "incorrect key file"));
-    }
-    let (source_type, host) = match lines[0].as_str() {
+pub fn build_key_info(parameters: &HashMap<String, String>) -> Result<S3KeyInfo, Error> {
+    let source = parameters.get("source_type")
+        .ok_or(Error::new(ErrorKind::InvalidData, "missing source_type"))?;
+    let host_option = parameters.get("host");
+    let (source_type, host) = match source.as_str() {
         "aws" => (SourceType::AWS, None),
         "gcp" => (SourceType::GCP, None),
-        _ => {
-            let parts: Vec<&str> = lines[0].splitn(3, ' ').collect();
-            if parts[0] == "custom" {
-                if parts.len() == 2 {
-                    (SourceType::Custom, Some(".".to_string() + parts[1]))
-                } else if parts[1] == "noprefix" {
-                    (SourceType::CustomNoPrefix, Some(parts[2].to_string()))
-                } else {
-                    return Err(Error::new(
-                        ErrorKind::InvalidData,
-                        "unknown source type modifier",
-                    ));
-                }
-            } else {
-                return Err(Error::new(ErrorKind::InvalidData, "unknown source type"));
-            }
+        "custom" => {
+            let host = host_option.ok_or(Error::new(ErrorKind::InvalidData, "missing host"))?;
+            (SourceType::Custom, Some(".".to_string() + host))
+        },
+        "custom_noprefix" => {
+            let host = host_option.ok_or(Error::new(ErrorKind::InvalidData, "missing host"))?;
+            (SourceType::CustomNoPrefix, Some(host.clone()))
         }
+        _ => return Err(Error::new(ErrorKind::InvalidData, "unknown source type"))
     };
+    let region = parameters.get("region").ok_or(Error::new(ErrorKind::InvalidData, "missing region"))?;
+    let key = parameters.get("access_key").ok_or(Error::new(ErrorKind::InvalidData, "missing access_key"))?;
+    let secret = parameters.get("access_secret").ok_or(Error::new(ErrorKind::InvalidData, "missing access_secret"))?;
     Ok(S3KeyInfo::new(
         source_type,
         host,
-        lines[1].clone(),
-        lines[2].clone(),
-        lines[3].clone(),
-        if lines.len() > 4 && !lines[4].is_empty() {Some(fs::read(&lines[4])?)} else {None}
+        region.clone(),
+        key.clone(),
+        secret.clone()
     ))
+}
+
+pub fn build_key_parameters(data: Vec<u8>) -> Result<HashMap<String, String>, Error> {
+    let text =
+        String::from_utf8(data).map_err(|e| Error::new(ErrorKind::InvalidData, e.to_string()))?;
+    Ok(text.split('\n')
+        .map(|v|v.to_string().split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        .filter(|v|v.is_some())
+        .map(|v|v.unwrap())
+        .collect())
 }
 
 #[cfg(test)]
@@ -384,8 +366,7 @@ mod tests {
             None,
             "us-east-1".to_string(),
             "key1234567890".to_string(),
-            "secret1234567890".to_string(),
-            None
+            "secret1234567890".to_string()
         );
         let path = "test/".to_string();
         let now = chrono::Utc
@@ -419,8 +400,7 @@ mod tests {
             None,
             "us-east-1".to_string(),
             "key1234567890".to_string(),
-            "secret1234567890".to_string(),
-            None
+            "secret1234567890".to_string()
         );
         let path = "pdbf/file.txt".to_string();
         let now = chrono::Utc
