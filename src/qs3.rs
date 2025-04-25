@@ -8,7 +8,8 @@ pub struct QKeyInfo {
     server_config: ServerConfig,
     rsa_key: String,
     read_timeout: u64,
-    retries: usize
+    retries: usize,
+    encryption_key: Option<Vec<u8>>
 }
 
 impl KeyInfo for QKeyInfo {
@@ -40,12 +41,17 @@ impl KeyInfo for QKeyInfo {
     ) -> Result<String, Error> {
         todo!()
     }
+
+    fn get_encryption_key(&self) -> Option<Vec<u8>> {
+        self.encryption_key.clone()
+    }
 }
 
 impl QKeyInfo {
-    pub fn new(data: Vec<u8>, rsa_key: String, read_timeout: u64, retries: usize)
+    pub fn new(data: Vec<u8>, rsa_key: String, read_timeout: u64, retries: usize,
+                encryption_key: Option<Vec<u8>>)
         -> Result<QKeyInfo, Error> {
         let server_config = ServerConfig::new(data)?;
-        Ok(QKeyInfo{ server_config, rsa_key, read_timeout, retries })
+        Ok(QKeyInfo{ server_config, rsa_key, read_timeout, retries, encryption_key })
     }
 }

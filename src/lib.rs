@@ -7,6 +7,7 @@ use hmac::digest::KeyInit;
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fs;
 use std::io::{Error, ErrorKind};
 
 const SIGNED_HEADER_STRING: &str = "host;x-amz-content-sha256;x-amz-date";
@@ -37,6 +38,8 @@ pub trait KeyInfo {
         path: &String,
         expiration: usize,
     ) -> Result<String, Error>;
+
+    fn get_encryption_key(&self) -> Option<Vec<u8>>;
 }
 
 pub struct S3KeyInfo {
@@ -45,6 +48,7 @@ pub struct S3KeyInfo {
     region: String,
     key: String,
     secret: String,
+    encryption_key: Option<Vec<u8>>
 }
 
 struct S3SignatureBuilder {
@@ -164,6 +168,10 @@ impl KeyInfo for S3KeyInfo {
             builder.build_signature(method, &self, "UNSIGNED-PAYLOAD".to_string(), &query_parameters, true)?;
         Ok(format!("{}?{}&X-Amz-Signature={}", builder.url, query_parameters, signature))
     }
+
+    fn get_encryption_key(&self) -> Option<Vec<u8>> {
+        self.encryption_key.clone()
+    }
 }
 
 impl S3KeyInfo {
@@ -173,6 +181,7 @@ impl S3KeyInfo {
         region: String,
         key: String,
         secret: String,
+        encryption_key: Option<Vec<u8>>,
     ) -> S3KeyInfo {
         S3KeyInfo {
             source_type,
@@ -180,10 +189,12 @@ impl S3KeyInfo {
             region,
             key,
             secret,
+            encryption_key
         }
     }
 
-    pub fn new_from_key_info(key_info: &S3KeyInfo, secret: String) -> Result<S3KeyInfo, Error> {
+    pub fn new_from_key_info(key_info: &S3KeyInfo, secret: String, encryption_key: Option<Vec<u8>>)
+        -> Result<S3KeyInfo, Error> {
         let hash = hex_decode(&key_info.secret)?;
         if hash.len() != 32 {
             return Err(Error::new(ErrorKind::InvalidData, "wrong hash size"));
@@ -200,7 +211,8 @@ impl S3KeyInfo {
             host: key_info.host.clone(),
             region: key_info.region.clone(),
             key: key_info.key.clone(),
-            secret
+            secret,
+            encryption_key
         })
     }
 }
@@ -355,6 +367,7 @@ pub fn build_key_info(data: Vec<u8>) -> Result<S3KeyInfo, Error> {
         lines[1].clone(),
         lines[2].clone(),
         lines[3].clone(),
+        if lines.len() > 4 && !lines[4].is_empty() {Some(fs::read(&lines[4])?)} else {None}
     ))
 }
 
@@ -372,6 +385,7 @@ mod tests {
             "us-east-1".to_string(),
             "key1234567890".to_string(),
             "secret1234567890".to_string(),
+            None
         );
         let path = "test/".to_string();
         let now = chrono::Utc
@@ -406,6 +420,7 @@ mod tests {
             "us-east-1".to_string(),
             "key1234567890".to_string(),
             "secret1234567890".to_string(),
+            None
         );
         let path = "pdbf/file.txt".to_string();
         let now = chrono::Utc
