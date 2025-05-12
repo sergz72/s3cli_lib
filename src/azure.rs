@@ -20,6 +20,7 @@ impl KeyInfo for AzureKeyInfo {
         datetime: DateTime<Utc>,
         data: &Vec<u8>,
         path: &String,
+        query_parameters: String
     ) -> Result<RequestInfo, Error> {
         let parts: Vec<String> = path.splitn(2, '/').map(|p| p.to_string()).collect();
         if parts.len() == 0 {

@@ -29,6 +29,7 @@ pub trait KeyInfo {
         datetime: DateTime<Utc>,
         data: &Vec<u8>,
         path: &String,
+        query_parameters: String
     ) -> Result<RequestInfo, Error>;
     fn build_presigned_url(
         &self,
@@ -136,6 +137,7 @@ impl KeyInfo for S3KeyInfo {
         datetime: DateTime<Utc>,
         data: &Vec<u8>,
         path: &String,
+        query_parameters: String
     ) -> Result<RequestInfo, Error> {
         let builder = S3SignatureBuilder::new(&self, path, datetime)?;
         let mut headers = HashMap::new();
@@ -144,9 +146,17 @@ impl KeyInfo for S3KeyInfo {
         hasher.update(data);
         let hash = hex_encode(hasher.finalize().as_slice());
         headers.insert("x-amz-content-sha256".to_string(), hash.clone());
-        let signature = builder.build_signature(method, &self, hash, &"".to_string(), false)?;
+        let mut qp = query_parameters.clone();
+        if !query_parameters.is_empty() {
+            qp += "=";
+        }
+        let signature = builder.build_signature(method, &self, hash, &qp, false)?;
         headers.insert("Authorization".to_string(), signature);
-        Ok(RequestInfo { url: builder.url.clone(), headers })
+        let mut url = builder.url;
+        if !query_parameters.is_empty() {
+            url = url + "?" + query_parameters.as_str();
+        }
+        Ok(RequestInfo { url, headers })
     }
 
     fn build_presigned_url(
@@ -372,7 +382,7 @@ mod tests {
         let now = chrono::Utc
             .with_ymd_and_hms(2023, 11, 5, 20, 14, 0)
             .unwrap();
-        let request_info = key_info.build_request_info("GET", now.clone(), &Vec::new(), &path)?;
+        let request_info = key_info.build_request_info("GET", now.clone(), &Vec::new(), &path, "".to_string())?;
         assert_eq!(request_info.url, "https://test.s3.us-east-1.amazonaws.com/");
         assert_eq!(request_info.headers.len(), 3);
         //assert_eq!(request_info.headers.get("host").unwrap().as_str(), "test.s3.amazonaws.com");
