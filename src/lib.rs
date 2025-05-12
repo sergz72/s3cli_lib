@@ -147,7 +147,7 @@ impl KeyInfo for S3KeyInfo {
         let hash = hex_encode(hasher.finalize().as_slice());
         headers.insert("x-amz-content-sha256".to_string(), hash.clone());
         let mut qp = query_parameters.clone();
-        if !query_parameters.is_empty() {
+        if !query_parameters.is_empty() && !query_parameters.contains('='){
             qp += "=";
         }
         let signature = builder.build_signature(method, &self, hash, &qp, false)?;
