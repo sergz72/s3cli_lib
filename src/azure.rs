@@ -70,7 +70,7 @@ impl KeyInfo for AzureKeyInfo {
         if method == "GET" && parts.len() == 1 {
             url += "?restype=container&comp=list";
         }
-        Ok(RequestInfo { url, headers })
+        Ok(RequestInfo { url, headers, delete_request: method == "DELETE" })
     }
 
     fn build_presigned_url(

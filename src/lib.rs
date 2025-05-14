@@ -156,7 +156,7 @@ impl KeyInfo for S3KeyInfo {
         if !query_parameters.is_empty() {
             url = url + "?" + query_parameters.as_str();
         }
-        Ok(RequestInfo { url, headers })
+        Ok(RequestInfo { url, headers, delete_request: method == "DELETE" })
     }
 
     fn build_presigned_url(
@@ -297,6 +297,7 @@ fn scope_string(shortdate: &String, region: &String, service: &str) -> String {
 pub struct RequestInfo {
     pub url: String,
     pub headers: HashMap<String, String>,
+    pub delete_request: bool
 }
 
 impl RequestInfo {
@@ -304,7 +305,12 @@ impl RequestInfo {
         let mut request = if data.is_some() {
             minreq::put(&self.url).with_body(data.unwrap())
         } else {
-            minreq::get(&self.url)
+            if self.delete_request {
+                minreq::delete(&self.url)
+            }
+            else {
+                minreq::get(&self.url)
+            }
         };
         for (k, v) in &self.headers {
             request = request.with_header(k, v);
@@ -314,7 +320,7 @@ impl RequestInfo {
             .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))?;
         let status_code = res.status_code;
         let data = res.into_bytes();
-        if status_code != 200 && status_code != 201 {
+        if status_code != 200 && status_code != 201 && status_code != 204 {
             let body =
                 String::from_utf8(data).unwrap_or("could not parse body to string".to_string());
             let error_message = format!("wrong status code {}\n{}", status_code, body);

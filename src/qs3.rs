@@ -29,7 +29,7 @@ impl KeyInfo for QKeyInfo {
                                                 self.read_timeout, self.retries)?;
         let url = String::from_utf8(response)
             .map_err(|_e|Error::new(ErrorKind::InvalidData, "incorrect response from server"))?;
-        Ok(RequestInfo{ url, headers: HashMap::new() })
+        Ok(RequestInfo{ url, headers: HashMap::new(), delete_request: false })
     }
 
     fn build_presigned_url(
