@@ -18,7 +18,8 @@ impl KeyInfo for QKeyInfo {
         _datetime: DateTime<Utc>,
         _data: &Vec<u8>,
         path: &String,
-        query_parameters: String
+        query_parameters: String,
+        additional_headers: &HashMap<String, String>
     ) -> Result<RequestInfo, Error> {
         let method = match method {
             "GET" => 0u8,

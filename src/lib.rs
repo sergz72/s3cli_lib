@@ -29,7 +29,8 @@ pub trait KeyInfo {
         datetime: DateTime<Utc>,
         data: &Vec<u8>,
         path: &String,
-        query_parameters: String
+        query_parameters: String,
+        additional_headers: &HashMap<String, String>
     ) -> Result<RequestInfo, Error>;
     fn build_presigned_url(
         &self,
@@ -137,10 +138,11 @@ impl KeyInfo for S3KeyInfo {
         datetime: DateTime<Utc>,
         data: &Vec<u8>,
         path: &String,
-        query_parameters: String
+        query_parameters: String,
+        additional_headers: &HashMap<String, String>
     ) -> Result<RequestInfo, Error> {
         let builder = S3SignatureBuilder::new(&self, path, datetime)?;
-        let mut headers = HashMap::new();
+        let mut headers = HashMap::from(additional_headers.clone());
         headers.insert("X-Amz-Date".to_string(), builder.longdatetime.clone());
         let mut hasher = Sha256::new();
         hasher.update(data);
@@ -371,6 +373,7 @@ pub fn build_key_parameters(data: Vec<u8>) -> Result<HashMap<String, String>, Er
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use crate::{KeyInfo, S3KeyInfo, SourceType};
     use chrono::TimeZone;
     use std::io::Error;
@@ -388,7 +391,9 @@ mod tests {
         let now = chrono::Utc
             .with_ymd_and_hms(2023, 11, 5, 20, 14, 0)
             .unwrap();
-        let request_info = key_info.build_request_info("GET", now.clone(), &Vec::new(), &path, "".to_string())?;
+        let request_info = key_info
+            .build_request_info("GET", now.clone(), &Vec::new(), &path, "".to_string(),
+                                &HashMap::new())?;
         assert_eq!(request_info.url, "https://test.s3.us-east-1.amazonaws.com/");
         assert_eq!(request_info.headers.len(), 3);
         //assert_eq!(request_info.headers.get("host").unwrap().as_str(), "test.s3.amazonaws.com");
